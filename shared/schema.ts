@@ -10,6 +10,8 @@ export const users = pgTable("users", {
   profilePicture: text("profile_picture"),
   accessToken: text("access_token"),
   refreshToken: text("refresh_token"),
+  role: text("role").notNull().default("user"),
+  isAdmin: boolean("is_admin").default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

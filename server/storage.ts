@@ -8,10 +8,13 @@ export interface IStorage {
   getUserByGoogleId(googleId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUserTokens(id: number, accessToken: string, refreshToken: string): Promise<User>;
+  updateUserRole(id: number, role: string, isAdmin: boolean): Promise<User>;
+  getAllUsers(): Promise<User[]>;
   
   // Document methods
   getDocumentById(id: number): Promise<Document | undefined>;
   getDocumentsByUserId(userId: number): Promise<Document[]>;
+  getAllDocuments(): Promise<Document[]>;
   createDocument(document: InsertDocument): Promise<Document>;
   updateDocument(id: number, data: UpdateDocument): Promise<Document | undefined>;
   deleteDocument(id: number): Promise<boolean>;
@@ -42,6 +45,19 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return updated;
   }
+  
+  async updateUserRole(id: number, role: string, isAdmin: boolean): Promise<User> {
+    const [updated] = await db
+      .update(users)
+      .set({ role, isAdmin })
+      .where(eq(users.id, id))
+      .returning();
+    return updated;
+  }
+  
+  async getAllUsers(): Promise<User[]> {
+    return await db.select().from(users);
+  }
 
   // Document methods
   async getDocumentById(id: number): Promise<Document | undefined> {
@@ -51,6 +67,10 @@ export class DatabaseStorage implements IStorage {
 
   async getDocumentsByUserId(userId: number): Promise<Document[]> {
     return await db.select().from(documents).where(eq(documents.userId, userId));
+  }
+  
+  async getAllDocuments(): Promise<Document[]> {
+    return await db.select().from(documents);
   }
 
   async createDocument(document: InsertDocument): Promise<Document> {

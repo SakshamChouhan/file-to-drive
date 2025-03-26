@@ -121,6 +121,30 @@ export const isAuthenticated = (req: Request, res: Response, next: NextFunction)
   res.status(401).json({ message: 'Unauthorized' });
 };
 
+// Admin role middleware
+export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
+  if (req.isAuthenticated()) {
+    const user = req.user as User;
+    if (user.isAdmin) {
+      return next();
+    }
+    return res.status(403).json({ message: 'Forbidden: Admin access required' });
+  }
+  res.status(401).json({ message: 'Unauthorized' });
+};
+
+// Role-based access middleware
+export const hasRole = (role: string) => (req: Request, res: Response, next: NextFunction) => {
+  if (req.isAuthenticated()) {
+    const user = req.user as User;
+    if (user.role === role || user.isAdmin) {
+      return next();
+    }
+    return res.status(403).json({ message: `Forbidden: ${role} role required` });
+  }
+  res.status(401).json({ message: 'Unauthorized' });
+};
+
 // Types
 export interface User {
   id: number;
@@ -128,10 +152,25 @@ export interface User {
   displayName: string;
   email: string;
   profilePicture?: string;
+  role: string;
+  isAdmin: boolean;
+  accessToken?: string;
+  refreshToken?: string;
 }
 
 declare global {
   namespace Express {
-    interface User extends User {}
+    // Augment the User interface in Express namespace
+    interface User {
+      id: number;
+      googleId: string;
+      displayName: string;
+      email: string;
+      profilePicture?: string;
+      role: string;
+      isAdmin: boolean;
+      accessToken?: string;
+      refreshToken?: string;
+    }
   }
 }
