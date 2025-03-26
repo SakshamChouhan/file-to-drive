@@ -126,6 +126,19 @@ export function useEditor(initialDocument?: Document) {
     }
   }, [isSaved, isSaving, document, content, title, saveDraft]);
   
+  // Save on title change after a short delay
+  useEffect(() => {
+    if (document && title !== document.title) {
+      const titleChangeTimeout = setTimeout(async () => {
+        if (!isSaving) {
+          await saveDraft();
+        }
+      }, 1000); // 1 second delay after title change
+      
+      return () => clearTimeout(titleChangeTimeout);
+    }
+  }, [title, document, isSaving, saveDraft]);
+  
   return {
     document,
     content,

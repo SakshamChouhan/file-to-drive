@@ -92,12 +92,10 @@ const Home: React.FC = () => {
   };
   
   const handleConfirmSaveToDrive = async (documentTitle: string, category: string, permission: string): Promise<void> => {
-    // First update the title if changed
-    if (documentTitle !== title) {
-      handleTitleChange(documentTitle);
-      // Wait for title update to be processed
-      await saveDraft();
-    }
+    // Always update the title with the value from the modal
+    handleTitleChange(documentTitle);
+    // Always save the draft with the updated title before saving to Drive
+    await saveDraft();
     
     try {
       // Save to drive with the selected category, title, and permission

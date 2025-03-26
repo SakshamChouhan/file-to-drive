@@ -42,9 +42,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-      queryClient.invalidateQueries({ queryKey: ['/api/auth/current-user'] });
-      setLocation('/login');
+      const response = await fetch('/api/auth/logout', { 
+        method: 'POST', 
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        queryClient.invalidateQueries({ queryKey: ['/api/auth/current-user'] });
+        window.location.href = '/login'; // Use window.location for a full page reload
+      } else {
+        console.error('Logout failed with status:', response.status);
+      }
     } catch (error) {
       console.error('Failed to logout:', error);
     }

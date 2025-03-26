@@ -228,10 +228,13 @@ const Editor: React.FC<EditorProps> = ({
       <div className="px-4 sm:px-6 py-3 border-b border-neutral-200 bg-white">
         <Input
           type="text"
-          className="w-full px-2 py-1 text-xl font-medium border-transparent focus:border-[#4285F4] focus:ring-0 rounded"
-          value={document.title}
+          className="w-full px-2 py-1 text-xl font-medium border-gray-200 focus:border-[#4285F4] focus:ring-0 rounded"
+          value={document.title || ""}
           placeholder="Untitled Letter"
-          onChange={(e) => onUpdateTitle(e.target.value)}
+          onChange={(e) => {
+            onUpdateTitle(e.target.value);
+          }}
+          onBlur={() => document.title && document.title.trim() === "" && onUpdateTitle("Untitled Letter")}
         />
         
         {/* Edit History/Status and Collaboration Info */}

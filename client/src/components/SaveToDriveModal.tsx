@@ -53,12 +53,12 @@ const SaveToDriveModal: React.FC<SaveToDriveModalProps> = ({
     }
   });
   
-  // Update title when document changes
+  // Update title when document changes or modal opens
   useEffect(() => {
-    if (document) {
+    if (document && isOpen) {
       setTitle(document.title || 'Untitled Letter');
     }
-  }, [document]);
+  }, [document, isOpen]);
   
   // Reset state when modal opens/closes
   useEffect(() => {
