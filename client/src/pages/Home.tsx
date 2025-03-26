@@ -86,11 +86,12 @@ const Home: React.FC = () => {
     setActiveDocId(document.id);
   };
   
-  const handleSaveToDrive = async () => {
+  const handleSaveToDrive = async (): Promise<boolean> => {
     setIsSaveToDriveModalOpen(true);
+    return true; // Indicates the modal opened successfully
   };
   
-  const handleConfirmSaveToDrive = async (documentTitle: string, folder: string, permission: string) => {
+  const handleConfirmSaveToDrive = async (documentTitle: string, folder: string, permission: string): Promise<void> => {
     // First update the title if changed
     if (documentTitle !== title) {
       handleTitleChange(documentTitle);
@@ -139,6 +140,21 @@ const Home: React.FC = () => {
                 {isSaving ? 'Saving...' : isSaved ? 'All changes saved' : 'Unsaved changes'}
               </span>
               
+              {/* Admin Link (only shown for admin users) */}
+              {user?.isAdmin && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => {
+                    setLocation('/admin');
+                    return false;
+                  }}
+                  className="text-blue-600 hidden sm:inline-flex"
+                >
+                  Admin Panel
+                </Button>
+              )}
+              
               {/* User Profile */}
               <UserProfile />
             </div>
@@ -184,6 +200,22 @@ const Home: React.FC = () => {
             <Menu className="h-5 w-5" />
           </Button>
         </div>
+        
+        {/* Mobile Admin Panel Button (only for admins) */}
+        {user?.isAdmin && (
+          <div className="md:hidden fixed bottom-4 right-4 z-10">
+            <Button
+              onClick={() => {
+                setLocation('/admin');
+                return false;
+              }}
+              className="bg-[#34A853] text-white rounded-full p-3 shadow-lg"
+              aria-label="Admin Panel"
+            >
+              <span className="material-icons h-5 w-5">admin_panel_settings</span>
+            </Button>
+          </div>
+        )}
 
         {/* Editor Container */}
         <Editor

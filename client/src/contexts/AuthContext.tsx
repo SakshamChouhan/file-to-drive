@@ -7,6 +7,8 @@ interface User {
   displayName: string;
   email: string;
   profilePicture?: string;
+  role: string;
+  isAdmin: boolean;
 }
 
 interface AuthState {
@@ -21,7 +23,7 @@ const AuthContext = createContext<AuthState | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [, setLocation] = useLocation();
   
-  const { data, isLoading } = useQuery({ 
+  const { data, isLoading } = useQuery<{ authenticated: boolean; user?: User }>({ 
     queryKey: ['/api/auth/current-user'],
     retry: false,
     refetchOnWindowFocus: true,
@@ -29,7 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
   
   const isAuthenticated = !!data?.authenticated;
-  const user = isAuthenticated ? data.user : null;
+  const user = isAuthenticated && data?.user ? data.user : null;
   
   // Redirect to login page if not authenticated
   useEffect(() => {

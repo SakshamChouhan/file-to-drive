@@ -47,7 +47,7 @@ export function useEditor(initialDocument?: Document) {
   // Save draft
   const saveDraft = useCallback(async () => {
     if (!document || isSaving || (isSaved && content === document.content && title === document.title)) {
-      return;
+      return false;
     }
     
     setIsSaving(true);
@@ -65,9 +65,12 @@ export function useEditor(initialDocument?: Document) {
         setDocument(updatedDoc);
         setLastSavedTime(updatedDoc.lastSaved ? new Date(updatedDoc.lastSaved) : new Date());
         setIsSaved(true);
+        return true;
       }
+      return false;
     } catch (error) {
       console.error('Failed to save draft:', error);
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -109,8 +112,8 @@ export function useEditor(initialDocument?: Document) {
     const autoSaveInterval = 30000; // 30 seconds
     
     if (!isSaved && !isSaving && document) {
-      const timeoutId = setTimeout(() => {
-        saveDraft();
+      const timeoutId = setTimeout(async () => {
+        await saveDraft();
       }, autoSaveInterval);
       
       return () => clearTimeout(timeoutId);

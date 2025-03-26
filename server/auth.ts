@@ -10,11 +10,11 @@ if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
 
 // Configure Google OAuth strategy
 passport.use(new GoogleStrategy({
-  clientID: process.env.GOOGLE_CLIENT_ID,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  clientID: process.env.GOOGLE_CLIENT_ID!,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
   callbackURL: '/api/auth/google/callback',
   scope: ['profile', 'email', 'https://www.googleapis.com/auth/drive.file']
-}, async (accessToken, refreshToken, profile, done) => {
+}, async (accessToken: string, refreshToken: string, profile: any, done: any) => {
   try {
     // Check if user exists
     let user = await storage.getUserByGoogleId(profile.id);
@@ -25,7 +25,7 @@ passport.use(new GoogleStrategy({
         googleId: profile.id,
         displayName: profile.displayName,
         email: profile.emails?.[0]?.value || 'unknown@example.com',
-        profilePicture: profile.photos?.[0]?.value,
+        profilePicture: profile.photos?.[0]?.value || undefined,
         accessToken,
         refreshToken
       });
@@ -34,7 +34,12 @@ passport.use(new GoogleStrategy({
       user = await storage.updateUserTokens(user.id, accessToken, refreshToken);
     }
     
-    return done(null, { id: user.id, googleId: user.googleId });
+    return done(null, { 
+      id: user.id, 
+      googleId: user.googleId,
+      role: user.role,
+      isAdmin: user.isAdmin
+    });
   } catch (error) {
     return done(error as Error);
   }
@@ -48,7 +53,16 @@ passport.serializeUser((user, done) => {
 passport.deserializeUser(async (id: number, done) => {
   try {
     const user = await storage.getUser(id);
-    done(null, user);
+    if (user) {
+      // Convert null to undefined for profilePicture
+      const userWithFixedTypes = {
+        ...user,
+        profilePicture: user.profilePicture || undefined
+      };
+      done(null, userWithFixedTypes);
+    } else {
+      done(null, null);
+    }
   } catch (error) {
     done(error);
   }
@@ -108,7 +122,9 @@ authRouter.get('/current-user', (req, res) => {
       id: user.id,
       displayName: user.displayName,
       email: user.email,
-      profilePicture: user.profilePicture
+      profilePicture: user.profilePicture,
+      role: user.role,
+      isAdmin: user.isAdmin
     }
   });
 });

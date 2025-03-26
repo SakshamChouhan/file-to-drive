@@ -13,7 +13,7 @@ import {
 
 interface EditorProps {
   document?: Document;
-  onSaveDraft: () => Promise<void>;
+  onSaveDraft: () => Promise<boolean>;
   onSaveToDrive: () => Promise<boolean>;
   onUpdateTitle: (title: string) => void;
   onUpdateContent: (content: string) => void;

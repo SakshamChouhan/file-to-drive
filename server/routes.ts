@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { authRouter, isAuthenticated, configureAuth, type User } from "./auth";
+import { authRouter, isAuthenticated, isAdmin, configureAuth, type User } from "./auth";
 import { saveDocumentToDrive, getDocumentsFromDrive } from "./google";
 import express from "express";
 import { updateDocumentSchema, insertDocumentSchema } from "@shared/schema";
@@ -190,6 +190,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Register the documents router
   app.use('/api/documents', documentsRouter);
+  
+  // Admin API
+  const adminRouter = express.Router();
+  
+  // Get all users (admin only)
+  adminRouter.get('/users', isAdmin, async (req, res) => {
+    try {
+      const users = await storage.getAllUsers();
+      // Filter out sensitive information
+      const safeUsers = users.map(user => ({
+        id: user.id,
+        displayName: user.displayName,
+        email: user.email,
+        profilePicture: user.profilePicture,
+        role: user.role,
+        isAdmin: user.isAdmin,
+        createdAt: user.createdAt
+      }));
+      res.json(safeUsers);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      res.status(500).json({ message: 'Failed to fetch users' });
+    }
+  });
+  
+  // Update user role (admin only)
+  adminRouter.patch('/users/:id', isAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: 'Invalid user ID' });
+      }
+      
+      const { role, isAdmin } = req.body;
+      
+      if (typeof isAdmin !== 'boolean' && role === undefined) {
+        return res.status(400).json({ message: 'Invalid role or admin status' });
+      }
+      
+      const user = await storage.getUser(id);
+      
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      
+      const updatedUser = await storage.updateUserRole(
+        id,
+        role || user.role,
+        isAdmin !== undefined ? isAdmin : user.isAdmin
+      );
+      
+      // Filter out sensitive information
+      const safeUser = {
+        id: updatedUser.id,
+        displayName: updatedUser.displayName,
+        email: updatedUser.email,
+        profilePicture: updatedUser.profilePicture,
+        role: updatedUser.role,
+        isAdmin: updatedUser.isAdmin,
+        createdAt: updatedUser.createdAt
+      };
+      
+      res.json(safeUser);
+    } catch (error) {
+      console.error('Error updating user role:', error);
+      res.status(500).json({ message: 'Failed to update user role' });
+    }
+  });
+  
+  // Get all documents (admin only)
+  adminRouter.get('/documents', isAdmin, async (req, res) => {
+    try {
+      const documents = await storage.getAllDocuments();
+      res.json(documents);
+    } catch (error) {
+      console.error('Error fetching all documents:', error);
+      res.status(500).json({ message: 'Failed to fetch documents' });
+    }
+  });
+  
+  // Register the admin router
+  app.use('/api/admin', adminRouter);
   
   const httpServer = createServer(app);
   return httpServer;

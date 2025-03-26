@@ -4,7 +4,7 @@ import { useDocuments } from '@/hooks/useDocuments';
 import { Document } from '@shared/schema';
 import { DriveDocument } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
-import { MoreVertical, Plus, Description, Cloud } from 'lucide-react';
+import { MoreVertical, Plus, FileText, Cloud } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 interface SidebarProps {
@@ -57,7 +57,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 }`}
                 onClick={() => onSelectDocument(doc)}
               >
-                <Description className="text-gray-400 mr-3 h-5 w-5" />
+                <FileText className="text-gray-400 mr-3 h-5 w-5" />
                 <div className="flex-grow overflow-hidden">
                   <h3 className="text-sm font-medium text-gray-900 truncate">{doc.title}</h3>
                   <p className="text-xs text-gray-500 truncate">
