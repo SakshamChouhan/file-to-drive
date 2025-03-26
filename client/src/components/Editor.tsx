@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Editor as DraftEditor, EditorState, RichUtils, ContentState, convertToRaw, convertFromRaw } from 'draft-js';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Editor as DraftEditor, EditorState, RichUtils, ContentState, convertToRaw, convertFromRaw, SelectionState } from 'draft-js';
 import 'draft-js/dist/Draft.css';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,8 +8,11 @@ import { formatDistanceToNow, format } from 'date-fns';
 import {
   Bold, Italic, Underline, AlignLeft, AlignCenter,
   AlignRight, List, ListOrdered, ChevronLeft, ChevronRight,
-  CloudUpload, MoreHorizontal
+  CloudUpload, MoreHorizontal, Users
 } from 'lucide-react';
+import { CollaborationInfo } from './CollaborationInfo';
+import { useWebSocket } from '../hooks/useWebSocket';
+import { useAuth } from '../hooks/useAuth';
 
 interface EditorProps {
   document?: Document;
@@ -44,7 +47,89 @@ const Editor: React.FC<EditorProps> = ({
     return EditorState.createEmpty();
   });
   
+  const [collaborators, setCollaborators] = useState<any[]>([]);
+  const skipNextUpdate = useRef(false);
   const editorRef = useRef<DraftEditor>(null);
+  const { user } = useAuth();
+  
+  // Connect to WebSocket for real-time collaboration if document exists
+  const { isConnected, sendDocumentUpdate, sendCursorPosition } = useWebSocket({
+    documentId: document?.id?.toString() || '',
+    onUserJoined: (data) => {
+      // Add user to collaborators list
+      setCollaborators(prev => {
+        // Check if user already exists
+        if (prev.some(c => c.id === data.userId)) {
+          return prev.map(c => 
+            c.id === data.userId 
+              ? { ...c, lastActive: new Date(data.timestamp) } 
+              : c
+          );
+        }
+        // Add new user
+        return [...prev, {
+          id: data.userId,
+          displayName: data.displayName || `User ${data.userId}`,
+          profilePicture: data.profilePicture,
+          lastActive: new Date(data.timestamp)
+        }];
+      });
+    },
+    onUserLeft: (data) => {
+      // Remove user from collaborators list
+      setCollaborators(prev => 
+        prev.filter(c => c.id !== data.userId)
+      );
+    },
+    onDocumentUpdated: (data) => {
+      // Skip if this is our own update
+      if (data.userId === user?.id) return;
+      
+      try {
+        // Apply the changes from another user
+        skipNextUpdate.current = true;
+        
+        let newState;
+        const incomingContent = JSON.parse(data.content);
+        const contentState = convertFromRaw(incomingContent);
+        
+        if (data.selection) {
+          // If there's selection info, preserve it
+          const selection = new SelectionState(data.selection);
+          newState = EditorState.forceSelection(
+            EditorState.createWithContent(contentState),
+            selection
+          );
+        } else {
+          newState = EditorState.createWithContent(contentState);
+        }
+        
+        setEditorState(newState);
+        
+        // Update collaborator's last active time
+        setCollaborators(prev => 
+          prev.map(c => 
+            c.id === data.userId 
+              ? { ...c, lastActive: new Date(data.timestamp) } 
+              : c
+          )
+        );
+      } catch (e) {
+        console.error('Error applying remote changes:', e);
+      }
+    },
+    onCursorPosition: (data) => {
+      // TODO: Show collaborative cursor positions
+      // Update collaborator's last active time
+      setCollaborators(prev => 
+        prev.map(c => 
+          c.id === data.userId 
+            ? { ...c, lastActive: new Date(data.timestamp) } 
+            : c
+        )
+      );
+    }
+  });
   
   useEffect(() => {
     if (!document?.content) return;
@@ -61,15 +146,55 @@ const Editor: React.FC<EditorProps> = ({
     }
   }, [document?.id, document?.content]);
   
+  // Send cursor position updates on selection change
+  useEffect(() => {
+    if (!isConnected || !document || skipNextUpdate.current) {
+      skipNextUpdate.current = false;
+      return;
+    }
+    
+    const selection = editorState.getSelection();
+    if (selection.getHasFocus()) {
+      sendCursorPosition({
+        anchorKey: selection.getAnchorKey(),
+        anchorOffset: selection.getAnchorOffset(),
+        focusKey: selection.getFocusKey(),
+        focusOffset: selection.getFocusOffset(),
+        isBackward: selection.getIsBackward(),
+        hasFocus: selection.getHasFocus()
+      });
+    }
+  }, [editorState.getSelection(), isConnected, document, sendCursorPosition]);
+  
   const handleChange = (state: EditorState) => {
     setEditorState(state);
+    
+    // Skip sending updates if this was triggered by a received update
+    if (skipNextUpdate.current) {
+      skipNextUpdate.current = false;
+      return;
+    }
     
     // Convert content to JSON string
     const contentState = state.getCurrentContent();
     const rawContent = convertToRaw(contentState);
     const jsonContent = JSON.stringify(rawContent);
     
+    // Send to parent component
     onUpdateContent(jsonContent);
+    
+    // Send update to collaborators
+    if (isConnected && document) {
+      const selection = state.getSelection();
+      sendDocumentUpdate(jsonContent, {
+        anchorKey: selection.getAnchorKey(),
+        anchorOffset: selection.getAnchorOffset(),
+        focusKey: selection.getFocusKey(),
+        focusOffset: selection.getFocusOffset(),
+        isBackward: selection.getIsBackward(),
+        hasFocus: selection.getHasFocus()
+      });
+    }
   };
   
   const handleKeyCommand = (command: string, editorState: EditorState) => {
@@ -109,13 +234,33 @@ const Editor: React.FC<EditorProps> = ({
           onChange={(e) => onUpdateTitle(e.target.value)}
         />
         
-        {/* Edit History/Status */}
-        <div className="flex items-center mt-1 text-xs text-gray-500">
-          {lastSavedTime && (
-            <span>
-              Last edited on {format(lastSavedTime, 'MMM d, yyyy')} at {format(lastSavedTime, 'h:mm a')}
-            </span>
-          )}
+        {/* Edit History/Status and Collaboration Info */}
+        <div className="flex items-center justify-between mt-1 text-xs text-gray-500">
+          <div>
+            {lastSavedTime && (
+              <span>
+                Last edited on {format(lastSavedTime, 'MMM d, yyyy')} at {format(lastSavedTime, 'h:mm a')}
+              </span>
+            )}
+          </div>
+          
+          {/* Show collaboration status */}
+          <div className="flex items-center">
+            {isConnected && (
+              <span className="text-green-600 flex items-center mr-2">
+                <span className="h-2 w-2 bg-green-500 rounded-full mr-1"></span>
+                Realtime
+              </span>
+            )}
+            
+            {/* Show collaborators if any */}
+            {collaborators.length > 0 && (
+              <CollaborationInfo 
+                documentId={document.id.toString()} 
+                collaborators={collaborators} 
+              />
+            )}
+          </div>
         </div>
       </div>
       
