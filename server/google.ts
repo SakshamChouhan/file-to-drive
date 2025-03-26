@@ -23,7 +23,7 @@ export async function getDriveClient(userId: number) {
 }
 
 // Create or get the LetterDrive folder
-export async function getOrCreateLetterDriveFolder(userId: number) {
+export async function getOrCreateLetterDriveFolder(userId: number): Promise<string> {
   const drive = await getDriveClient(userId);
   
   // Check if "LetterDrive" folder exists
@@ -33,30 +33,33 @@ export async function getOrCreateLetterDriveFolder(userId: number) {
     fields: 'files(id, name)'
   });
   
-  let letterDriveFolderId: string;
-  
-  if (response.data.files && response.data.files.length > 0) {
-    letterDriveFolderId = response.data.files[0].id;
-  } else {
-    // Create folder if it doesn't exist
-    const folderMetadata = {
-      name: 'LetterDrive',
-      mimeType: 'application/vnd.google-apps.folder'
-    };
-    
-    const folder = await drive.files.create({
-      requestBody: folderMetadata,
-      fields: 'id'
-    });
-    
-    letterDriveFolderId = folder.data.id;
+  // If folder exists and has valid ID
+  if (response.data.files && 
+      response.data.files.length > 0 && 
+      response.data.files[0].id) {
+    return response.data.files[0].id;
   }
   
-  return letterDriveFolderId;
+  // Create folder if it doesn't exist
+  const folderMetadata = {
+    name: 'LetterDrive',
+    mimeType: 'application/vnd.google-apps.folder'
+  };
+  
+  const folder = await drive.files.create({
+    requestBody: folderMetadata,
+    fields: 'id'
+  });
+  
+  if (!folder.data.id) {
+    throw new Error('Failed to create LetterDrive folder');
+  }
+  
+  return folder.data.id;
 }
 
 // Create or get category folder inside LetterDrive
-export async function getOrCreateCategoryFolder(userId: number, categoryName: string) {
+export async function getOrCreateCategoryFolder(userId: number, categoryName: string): Promise<string> {
   const drive = await getDriveClient(userId);
   const parentFolderId = await getOrCreateLetterDriveFolder(userId);
   
@@ -67,7 +70,9 @@ export async function getOrCreateCategoryFolder(userId: number, categoryName: st
     fields: 'files(id, name)'
   });
   
-  if (response.data.files && response.data.files.length > 0) {
+  if (response.data.files && 
+      response.data.files.length > 0 &&
+      response.data.files[0].id) {
     return response.data.files[0].id;
   }
   
@@ -82,6 +87,10 @@ export async function getOrCreateCategoryFolder(userId: number, categoryName: st
     requestBody: folderMetadata,
     fields: 'id'
   });
+  
+  if (!folder.data.id) {
+    throw new Error(`Failed to create category folder: ${categoryName}`);
+  }
   
   return folder.data.id;
 }
@@ -107,16 +116,34 @@ export async function saveDocumentToDrive(
   title: string,
   content: string,
   category?: string,
-  driveId?: string
-) {
+  driveId?: string,
+  permission?: string
+): Promise<string> {
   const drive = await getDriveClient(userId);
   
   // Get appropriate folder - use category folder if provided, otherwise use main folder
   let folderId: string;
-  if (category) {
+  if (category && category !== 'main') {
     folderId = await getOrCreateCategoryFolder(userId, category);
   } else {
     folderId = await getOrCreateLetterDriveFolder(userId);
+  }
+  
+  // Parse content if it seems to be JSON and extract text
+  let textContent = content;
+  if (content && (content.startsWith('{') || content.startsWith('['))) {
+    try {
+      const contentObj = JSON.parse(content);
+      if (contentObj.blocks && Array.isArray(contentObj.blocks)) {
+        textContent = contentObj.blocks
+          .map((block: any) => block.text)
+          .filter(Boolean)
+          .join('\n\n');
+      }
+    } catch (e) {
+      // Not valid JSON, use as is
+      console.log('Error parsing JSON content:', e);
+    }
   }
   
   // Format the content as HTML
@@ -128,7 +155,9 @@ export async function saveDocumentToDrive(
       <title>${title}</title>
     </head>
     <body>
-      ${content}
+      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        ${textContent.split('\n\n').map(para => `<p>${para}</p>`).join('')}
+      </div>
     </body>
     </html>
   `;
@@ -145,6 +174,41 @@ export async function saveDocumentToDrive(
         body: htmlContent
       }
     });
+    
+    // Update permissions if specified
+    if (permission) {
+      try {
+        // First get current permissions
+        const permissionResponse = await drive.permissions.list({
+          fileId: driveId
+        });
+        
+        // If permission is 'anyone' and no 'anyone' permission exists
+        if (permission === 'anyone' && 
+            !permissionResponse.data.permissions?.some(p => p.type === 'anyone')) {
+          await drive.permissions.create({
+            fileId: driveId,
+            requestBody: {
+              role: 'reader',
+              type: 'anyone'
+            }
+          });
+        } 
+        // If permission is 'private' and 'anyone' permission exists, remove it
+        else if (permission === 'private') {
+          const anyonePermission = permissionResponse.data.permissions?.find(p => p.type === 'anyone');
+          if (anyonePermission && anyonePermission.id) {
+            await drive.permissions.delete({
+              fileId: driveId,
+              permissionId: anyonePermission.id
+            });
+          }
+        }
+      } catch (permissionError) {
+        console.error('Error updating permissions:', permissionError);
+        // Continue even if permission update fails
+      }
+    }
     
     return driveId;
   } else {
@@ -164,6 +228,26 @@ export async function saveDocumentToDrive(
       fields: 'id,webViewLink'
     });
     
+    if (!file.data.id) {
+      throw new Error(`Failed to create document in Google Drive: ${title}`);
+    }
+    
+    // Set permissions if specified
+    if (permission === 'anyone') {
+      try {
+        await drive.permissions.create({
+          fileId: file.data.id,
+          requestBody: {
+            role: 'reader',
+            type: 'anyone'
+          }
+        });
+      } catch (permissionError) {
+        console.error('Error setting permissions:', permissionError);
+        // Continue even if permission setting fails
+      }
+    }
+    
     return file.data.id;
   }
 }
@@ -176,7 +260,7 @@ export async function getDocumentsFromDrive(userId: number, categoryName?: strin
     let folderId: string;
     
     // If category is specified, get documents from that category folder
-    if (categoryName) {
+    if (categoryName && categoryName !== 'main') {
       folderId = await getOrCreateCategoryFolder(userId, categoryName);
     } else {
       folderId = await getOrCreateLetterDriveFolder(userId);

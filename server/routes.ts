@@ -12,7 +12,7 @@ import {
 import express from "express";
 import { updateDocumentSchema, insertDocumentSchema } from "@shared/schema";
 import { z } from "zod";
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Configure authentication
@@ -82,6 +82,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Failed to create document' });
     }
   });
+
+  // Save document to Google Drive
+documentsRouter.post('/:id/save-to-drive', isAuthenticated, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: 'Invalid document ID' });
+    }
+    
+    const document = await storage.getDocumentById(id);
+    
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+    
+    const user = req.user as User;
+    if (document.userId !== user.id) {
+      return res.status(403).json({ message: 'Unauthorized to save this document' });
+    }
+    
+    const { category, plainTextContent, title, permission } = req.body;
+    
+    // Use plainTextContent if available, otherwise use document.content
+    const contentToSave = plainTextContent || document.content || '';
+    
+    try {
+      const driveId = await saveDocumentToDrive(
+        user.id,
+        id,
+        title || document.title, // Use title from request if available
+        contentToSave,
+        category,
+        document.driveId || undefined,
+        permission // Pass permission parameter to Google Drive API
+      );
+      
+      // Update document with Drive ID and possibly new title
+      const updatedDocument = await storage.updateDocument(id, {
+        driveId: driveId || undefined,
+        isInDrive: true,
+        title: title || document.title // Update title if provided
+      });
+      
+      res.json(updatedDocument);
+    } catch (googleError: any) {
+      console.error('Google API Error:', googleError);
+      
+      // Check if this is an authentication error
+      if (googleError.message && (
+          googleError.message.includes('invalid_grant') || 
+          googleError.message.includes('invalid_token') ||
+          googleError.message.includes('Token expired') ||
+          googleError.message.includes('authorization') ||
+          googleError.code === 401
+        )) {
+        return res.status(401).json({ 
+          message: 'Google authorization error. Please re-authenticate.',
+          error: 'google_auth_error'
+        });
+      }
+      
+      // Check for quota or rate limit issues
+      if (googleError.code === 403 || 
+          (googleError.message && googleError.message.includes('quota'))) {
+        return res.status(429).json({
+          message: 'Google Drive API rate limit or quota exceeded. Please try again later.',
+          error: 'google_quota_error'
+        });
+      }
+      
+      // Re-throw for the outer catch
+      throw googleError;
+    }
+  } catch (error) {
+    console.error('Error saving document to Drive:', error);
+    res.status(500).json({ message: 'Failed to save document to Google Drive' });
+  }
+});
   
   // Update a document
   documentsRouter.put('/:id', isAuthenticated, async (req, res) => {
@@ -143,48 +221,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Save document to Google Drive
-  documentsRouter.post('/:id/save-to-drive', isAuthenticated, async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: 'Invalid document ID' });
-      }
-      
-      const document = await storage.getDocumentById(id);
-      
-      if (!document) {
-        return res.status(404).json({ message: 'Document not found' });
-      }
-      
-      const user = req.user as User;
-      if (document.userId !== user.id) {
-        return res.status(403).json({ message: 'Unauthorized to save this document' });
-      }
-      
-      const { category } = req.body;
-      
-      const driveId = await saveDocumentToDrive(
-        user.id,
-        id,
-        document.title,
-        document.content || '',
-        category,
-        document.driveId || undefined
-      );
-      
-      // Update document with Drive ID
-      const updatedDocument = await storage.updateDocument(id, {
-        driveId,
-        isInDrive: true
-      });
-      
-      res.json(updatedDocument);
-    } catch (error) {
-      console.error('Error saving document to Drive:', error);
-      res.status(500).json({ message: 'Failed to save document to Google Drive' });
-    }
-  });
+
   
   // Get Google Drive documents
   documentsRouter.get('/drive/list', isAuthenticated, async (req, res) => {
@@ -192,16 +229,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.user as User;
       const { category } = req.query;
       
-      let driveDocuments;
-      if (category) {
-        // Get documents from specific category
-        driveDocuments = await getDocumentsFromDrive(user.id, category as string);
-      } else {
-        // Get all documents
-        driveDocuments = await getAllDocumentsFromDrive(user.id);
+      try {
+        let driveDocuments;
+        if (category) {
+          // Get documents from specific category
+          driveDocuments = await getDocumentsFromDrive(user.id, category as string);
+        } else {
+          // Get all documents
+          driveDocuments = await getAllDocumentsFromDrive(user.id);
+        }
+        
+        res.json(driveDocuments);
+      } catch (googleError: any) {
+        console.error('Google API Error:', googleError);
+        
+        // Check if this is an authentication error
+        if (googleError.message && (
+            googleError.message.includes('invalid_grant') || 
+            googleError.message.includes('invalid_token') ||
+            googleError.message.includes('Token expired') ||
+            googleError.message.includes('authorization') ||
+            googleError.code === 401
+          )) {
+          return res.status(401).json({ 
+            message: 'Google authorization error. Please re-authenticate.',
+            error: 'google_auth_error'
+          });
+        }
+        
+        // Check for quota or rate limit issues
+        if (googleError.code === 403 || 
+            (googleError.message && googleError.message.includes('quota'))) {
+          return res.status(429).json({
+            message: 'Google Drive API rate limit or quota exceeded. Please try again later.',
+            error: 'google_quota_error'
+          });
+        }
+        
+        throw googleError; // Re-throw for the outer catch
       }
-      
-      res.json(driveDocuments);
     } catch (error) {
       console.error('Error fetching Drive documents:', error);
       res.status(500).json({ message: 'Failed to fetch documents from Google Drive' });
@@ -218,9 +284,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Category name is required' });
       }
       
-      const folderId = await getOrCreateCategoryFolder(user.id, categoryName);
-      
-      res.json({ id: folderId, name: categoryName });
+      try {
+        const folderId = await getOrCreateCategoryFolder(user.id, categoryName);
+        res.json({ id: folderId, name: categoryName });
+      } catch (googleError: any) {
+        console.error('Google API Error:', googleError);
+        
+        // Check if this is an authentication error
+        if (googleError.message && (
+            googleError.message.includes('invalid_grant') || 
+            googleError.message.includes('invalid_token') ||
+            googleError.message.includes('Token expired') ||
+            googleError.message.includes('authorization') ||
+            googleError.code === 401
+          )) {
+          return res.status(401).json({ 
+            message: 'Google authorization error. Please re-authenticate.',
+            error: 'google_auth_error'
+          });
+        }
+        
+        // Check for quota or rate limit issues
+        if (googleError.code === 403 || 
+            (googleError.message && googleError.message.includes('quota'))) {
+          return res.status(429).json({
+            message: 'Google Drive API rate limit or quota exceeded. Please try again later.',
+            error: 'google_quota_error'
+          });
+        }
+        
+        throw googleError; // Re-throw for the outer catch
+      }
     } catch (error) {
       console.error('Error creating category folder:', error);
       res.status(500).json({ message: 'Failed to create category folder' });
@@ -231,9 +325,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   documentsRouter.get('/drive/categories', isAuthenticated, async (req, res) => {
     try {
       const user = req.user as User;
-      const categories = await getCategoryFolders(user.id);
       
-      res.json(categories);
+      try {
+        const categories = await getCategoryFolders(user.id);
+        res.json(categories);
+      } catch (googleError: any) {
+        console.error('Google API Error:', googleError);
+        
+        // Check if this is an authentication error
+        if (googleError.message && (
+            googleError.message.includes('invalid_grant') || 
+            googleError.message.includes('invalid_token') ||
+            googleError.message.includes('Token expired') ||
+            googleError.message.includes('authorization') ||
+            googleError.code === 401
+          )) {
+          return res.status(401).json({ 
+            message: 'Google authorization error. Please re-authenticate.',
+            error: 'google_auth_error'
+          });
+        }
+        
+        // Check for quota or rate limit issues
+        if (googleError.code === 403 || 
+            (googleError.message && googleError.message.includes('quota'))) {
+          return res.status(429).json({
+            message: 'Google Drive API rate limit or quota exceeded. Please try again later.',
+            error: 'google_quota_error'
+          });
+        }
+        
+        throw googleError; // Re-throw for the outer catch
+      }
     } catch (error) {
       console.error('Error fetching category folders:', error);
       res.status(500).json({ message: 'Failed to fetch category folders' });
@@ -331,11 +454,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   
   // Store document sessions
-  const documentSessions: Record<string, Set<any>> = {};
+  const documentSessions: Record<string, Set<WebSocket>> = {};
   
   wss.on('connection', (ws) => {
     let userId: number | null = null;
-    let documentId: string | null = null;
+    let documentId: string = '';
     
     // Handle incoming messages
     ws.on('message', (message) => {
@@ -349,18 +472,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             userId = data.userId;
             documentId = data.documentId;
             
-            if (!documentSessions[documentId]) {
-              documentSessions[documentId] = new Set();
+            if (documentId && typeof documentId === 'string') {
+              if (!documentSessions[documentId]) {
+                documentSessions[documentId] = new Set();
+              }
+              
+              documentSessions[documentId].add(ws);
+              
+              // Notify others that someone joined
+              broadcastToOthers(documentId, ws, {
+                type: 'user-joined',
+                userId,
+                timestamp: new Date().toISOString()
+              });
             }
-            
-            documentSessions[documentId].add(ws);
-            
-            // Notify others that someone joined
-            broadcastToOthers(documentId, ws, {
-              type: 'user-joined',
-              userId,
-              timestamp: new Date().toISOString()
-            });
             break;
             
           case 'leave':
@@ -435,9 +560,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Helper function to broadcast messages to all other clients editing the same document
-  function broadcastToOthers(documentId: string, sender: any, message: any) {
+  function broadcastToOthers(documentId: string, sender: WebSocket, message: any) {
     if (documentSessions[documentId]) {
-      documentSessions[documentId].forEach((client) => {
+      documentSessions[documentId].forEach((client: WebSocket) => {
         if (client !== sender && client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify(message));
         }

@@ -77,7 +77,7 @@ export function useEditor(initialDocument?: Document) {
   }, [document, content, title, isSaving, isSaved, updateDocument]);
   
   // Save to Google Drive
-  const saveToGoogleDrive = useCallback(async () => {
+  const saveToGoogleDrive = useCallback(async (category?: string, permission?: string) => {
     if (!document || isSaving) {
       return;
     }
@@ -90,7 +90,13 @@ export function useEditor(initialDocument?: Document) {
     setIsSaving(true);
     
     try {
-      const updatedDoc = await saveToDrive.mutateAsync(document.id);
+      const updatedDoc = await saveToDrive.mutateAsync({ 
+        id: document.id,
+        title: title, // Pass the current title
+        category,
+        content: content, // Pass the current content
+        permission // Pass the permission parameter for sharing settings
+      } as any);
       
       if (updatedDoc) {
         setDocument(updatedDoc);
@@ -105,7 +111,7 @@ export function useEditor(initialDocument?: Document) {
     } finally {
       setIsSaving(false);
     }
-  }, [document, isSaving, isSaved, saveDraft, saveToDrive]);
+  }, [document, isSaving, isSaved, saveDraft, saveToDrive, title]);
   
   // Auto-save draft
   useEffect(() => {

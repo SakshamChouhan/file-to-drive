@@ -28,7 +28,7 @@ const SaveToDriveModal: React.FC<SaveToDriveModalProps> = ({
   onSave
 }) => {
   const [title, setTitle] = useState(document?.title || 'Untitled Letter');
-  const [category, setCategory] = useState<string>("");
+  const [category, setCategory] = useState<string>("main"); // Changed from empty string to "main"
   const [permission, setPermission] = useState('private');
   const [isNewCategory, setIsNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -199,7 +199,7 @@ const SaveToDriveModal: React.FC<SaveToDriveModalProps> = ({
                 </SelectTrigger>
                 <SelectContent>
                   {/* Main LetterDrive folder */}
-                  <SelectItem value="">
+                  <SelectItem value="main"> {/* Changed from empty string to "main" */}
                     <div className="flex items-center">
                       <Folder className="h-4 w-4 mr-2" />
                       Main Folder
@@ -207,7 +207,7 @@ const SaveToDriveModal: React.FC<SaveToDriveModalProps> = ({
                   </SelectItem>
                   
                   {/* Categories */}
-                  {categories?.map((cat) => (
+                  {categories?.filter(cat => cat.id && cat.name).map((cat) => (
                     <SelectItem key={cat.id} value={cat.name}>
                       <div className="flex items-center">
                         <Folder className="h-4 w-4 mr-2" />

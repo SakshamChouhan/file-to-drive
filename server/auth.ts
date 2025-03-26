@@ -54,10 +54,13 @@ passport.deserializeUser(async (id: number, done) => {
   try {
     const user = await storage.getUser(id);
     if (user) {
-      // Convert null to undefined for profilePicture
+      // Ensure correct types for optional and nullable fields
       const userWithFixedTypes = {
         ...user,
-        profilePicture: user.profilePicture || undefined
+        profilePicture: user.profilePicture || undefined,
+        accessToken: user.accessToken ?? undefined,
+        refreshToken: user.refreshToken ?? undefined,
+        isAdmin: user.isAdmin ?? false,  // Ensure isAdmin is always a boolean
       };
       done(null, userWithFixedTypes);
     } else {
@@ -67,6 +70,7 @@ passport.deserializeUser(async (id: number, done) => {
     done(error);
   }
 });
+
 
 // Configure Express session
 export const configureAuth = (app: express.Express) => {

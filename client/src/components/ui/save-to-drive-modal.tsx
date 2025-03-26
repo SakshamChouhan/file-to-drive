@@ -17,31 +17,34 @@ interface Category {
 interface SaveToDriveModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (title: string, category: string) => Promise<void>;
+  onSave: (title: string, category: string, permission?: string) => Promise<void>;
   document?: Document;
 }
 
 export function SaveToDriveModal({ isOpen, onClose, onSave, document }: SaveToDriveModalProps) {
   const [title, setTitle] = useState(document?.title || "Untitled Letter");
-  const [category, setCategory] = useState<string>("");
+  const [category, setCategory] = useState<string>("main"); // Changed from empty string to "main"
   const [isNewCategory, setIsNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [permission, setPermission] = useState<string>("private");
   const [isSaving, setIsSaving] = useState(false);
   
   // Query to fetch categories
   const { data: categories, isLoading: isCategoriesLoading } = useQuery<Category[]>({
     queryKey: ['/api/documents/drive/categories'],
-    queryFn: () => apiRequest('/api/documents/drive/categories'),
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/documents/drive/categories');
+      return response.json();
+    },
     enabled: isOpen // Only fetch when modal is open
   });
   
   // Create new category mutation
   const createCategoryMutation = useMutation({
-    mutationFn: (categoryName: string) => 
-      apiRequest('/api/documents/drive/categories', {
-        method: 'POST',
-        body: JSON.stringify({ categoryName })
-      }),
+    mutationFn: async (categoryName: string) => {
+      const response = await apiRequest('POST', '/api/documents/drive/categories', { categoryName });
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/documents/drive/categories'] });
     }
@@ -95,7 +98,7 @@ export function SaveToDriveModal({ isOpen, onClose, onSave, document }: SaveToDr
       try {
         setIsSaving(true);
         const result = await createCategoryMutation.mutateAsync(newCategoryName.trim());
-        await onSave(title, newCategoryName.trim());
+        await onSave(title, newCategoryName.trim(), permission);
         setIsSaving(false);
         onClose();
       } catch (error) {
@@ -106,7 +109,7 @@ export function SaveToDriveModal({ isOpen, onClose, onSave, document }: SaveToDr
       // Save to existing category
       try {
         setIsSaving(true);
-        await onSave(title, category);
+        await onSave(title, category, permission);
         setIsSaving(false);
         onClose();
       } catch (error) {
@@ -117,7 +120,7 @@ export function SaveToDriveModal({ isOpen, onClose, onSave, document }: SaveToDr
   };
   
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !isSaving && onClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !isSaving && !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Save to Google Drive</DialogTitle>
@@ -191,7 +194,7 @@ export function SaveToDriveModal({ isOpen, onClose, onSave, document }: SaveToDr
                 </SelectTrigger>
                 <SelectContent>
                   {/* Main LetterDrive folder */}
-                  <SelectItem value="">
+                  <SelectItem value="main">
                     <div className="flex items-center">
                       <Folder className="h-4 w-4 mr-2" />
                       Main Folder
@@ -199,7 +202,7 @@ export function SaveToDriveModal({ isOpen, onClose, onSave, document }: SaveToDr
                   </SelectItem>
                   
                   {/* Categories */}
-                  {categories?.map((cat) => (
+                  {categories?.filter(cat => cat.id && cat.name).map((cat) => (
                     <SelectItem key={cat.id} value={cat.name}>
                       <div className="flex items-center">
                         <Folder className="h-4 w-4 mr-2" />
@@ -219,6 +222,32 @@ export function SaveToDriveModal({ isOpen, onClose, onSave, document }: SaveToDr
               </Select>
             </div>
           )}
+          
+          {/* Permission settings */}
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="permission" className="text-right">
+              Sharing
+            </Label>
+            <Select value={permission} onValueChange={setPermission}>
+              <SelectTrigger id="permission" className="col-span-3">
+                <SelectValue placeholder="Select permission" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="private">
+                  <div className="flex items-center">
+                    <div className="h-4 w-4 mr-2 text-gray-500">🔒</div>
+                    Private
+                  </div>
+                </SelectItem>
+                <SelectItem value="anyone">
+                  <div className="flex items-center">
+                    <div className="h-4 w-4 mr-2 text-gray-500">🌐</div>
+                    Anyone with the link
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={isSaving}>

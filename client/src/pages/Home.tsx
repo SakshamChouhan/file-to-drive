@@ -91,26 +91,53 @@ const Home: React.FC = () => {
     return true; // Indicates the modal opened successfully
   };
   
-  const handleConfirmSaveToDrive = async (documentTitle: string, folder: string, permission: string): Promise<void> => {
+  const handleConfirmSaveToDrive = async (documentTitle: string, category: string, permission: string): Promise<void> => {
     // First update the title if changed
     if (documentTitle !== title) {
       handleTitleChange(documentTitle);
+      // Wait for title update to be processed
+      await saveDraft();
     }
     
-    // Save to drive
-    const success = await saveToGoogleDrive();
-    
-    if (success) {
-      setToast({
-        message: 'Document successfully saved to Google Drive',
-        details: 'You can access it anytime from your Drive',
-        type: 'success'
-      });
-    } else {
-      setToast({
-        message: 'Failed to save document to Google Drive',
-        type: 'error'
-      });
+    try {
+      // Save to drive with the selected category, title, and permission
+      const success = await saveToGoogleDrive(category, permission);
+      
+      if (success) {
+        setToast({
+          message: 'Document successfully saved to Google Drive',
+          details: 'You can access it anytime from your Drive',
+          type: 'success'
+        });
+      } else {
+        setToast({
+          message: 'Failed to save document to Google Drive',
+          type: 'error'
+        });
+      }
+    } catch (error: any) {
+      console.error('Error in handleConfirmSaveToDrive:', error);
+      
+      // Display specific error messages based on the error
+      if (error.message?.includes('authentication') || error.message?.includes('sign in')) {
+        setToast({
+          message: 'Google authentication error',
+          details: 'Please sign in again to reconnect to Google Drive',
+          type: 'error'
+        });
+      } else if (error.message?.includes('rate limit') || error.message?.includes('quota')) {
+        setToast({
+          message: 'Google Drive API quota exceeded',
+          details: 'Please try again later',
+          type: 'error'
+        });
+      } else {
+        setToast({
+          message: 'Failed to save document to Google Drive',
+          details: error.message || 'Unknown error occurred',
+          type: 'error'
+        });
+      }
     }
   };
   
