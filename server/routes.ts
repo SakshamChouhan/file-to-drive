@@ -2,10 +2,17 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { authRouter, isAuthenticated, isAdmin, configureAuth, type User } from "./auth";
-import { saveDocumentToDrive, getDocumentsFromDrive } from "./google";
+import { 
+  saveDocumentToDrive, 
+  getDocumentsFromDrive, 
+  getAllDocumentsFromDrive, 
+  getCategoryFolders,
+  getOrCreateCategoryFolder
+} from "./google";
 import express from "express";
 import { updateDocumentSchema, insertDocumentSchema } from "@shared/schema";
 import { z } from "zod";
+import { WebSocketServer } from 'ws';
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Configure authentication
@@ -155,11 +162,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Unauthorized to save this document' });
       }
       
+      const { category } = req.body;
+      
       const driveId = await saveDocumentToDrive(
         user.id,
         id,
         document.title,
         document.content || '',
+        category,
         document.driveId || undefined
       );
       
@@ -180,11 +190,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
   documentsRouter.get('/drive/list', isAuthenticated, async (req, res) => {
     try {
       const user = req.user as User;
-      const driveDocuments = await getDocumentsFromDrive(user.id);
+      const { category } = req.query;
+      
+      let driveDocuments;
+      if (category) {
+        // Get documents from specific category
+        driveDocuments = await getDocumentsFromDrive(user.id, category as string);
+      } else {
+        // Get all documents
+        driveDocuments = await getAllDocumentsFromDrive(user.id);
+      }
+      
       res.json(driveDocuments);
     } catch (error) {
       console.error('Error fetching Drive documents:', error);
       res.status(500).json({ message: 'Failed to fetch documents from Google Drive' });
+    }
+  });
+  
+  // Get or create a category folder
+  documentsRouter.post('/drive/categories', isAuthenticated, async (req, res) => {
+    try {
+      const user = req.user as User;
+      const { categoryName } = req.body;
+      
+      if (!categoryName || typeof categoryName !== 'string') {
+        return res.status(400).json({ message: 'Category name is required' });
+      }
+      
+      const folderId = await getOrCreateCategoryFolder(user.id, categoryName);
+      
+      res.json({ id: folderId, name: categoryName });
+    } catch (error) {
+      console.error('Error creating category folder:', error);
+      res.status(500).json({ message: 'Failed to create category folder' });
+    }
+  });
+  
+  // Get all category folders
+  documentsRouter.get('/drive/categories', isAuthenticated, async (req, res) => {
+    try {
+      const user = req.user as User;
+      const categories = await getCategoryFolders(user.id);
+      
+      res.json(categories);
+    } catch (error) {
+      console.error('Error fetching category folders:', error);
+      res.status(500).json({ message: 'Failed to fetch category folders' });
     }
   });
   
@@ -274,5 +326,124 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/admin', adminRouter);
   
   const httpServer = createServer(app);
+  
+  // Set up WebSocket server for real-time collaboration
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  
+  // Store document sessions
+  const documentSessions: Record<string, Set<any>> = {};
+  
+  wss.on('connection', (ws) => {
+    let userId: number | null = null;
+    let documentId: string | null = null;
+    
+    // Handle incoming messages
+    ws.on('message', (message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        
+        // Handle different message types
+        switch (data.type) {
+          case 'join':
+            // User joins a document editing session
+            userId = data.userId;
+            documentId = data.documentId;
+            
+            if (!documentSessions[documentId]) {
+              documentSessions[documentId] = new Set();
+            }
+            
+            documentSessions[documentId].add(ws);
+            
+            // Notify others that someone joined
+            broadcastToOthers(documentId, ws, {
+              type: 'user-joined',
+              userId,
+              timestamp: new Date().toISOString()
+            });
+            break;
+            
+          case 'leave':
+            // User leaves a document editing session
+            if (documentId && documentSessions[documentId]) {
+              documentSessions[documentId].delete(ws);
+              
+              // Clean up empty sessions
+              if (documentSessions[documentId].size === 0) {
+                delete documentSessions[documentId];
+              } else {
+                // Notify others that someone left
+                broadcastToOthers(documentId, ws, {
+                  type: 'user-left',
+                  userId,
+                  timestamp: new Date().toISOString()
+                });
+              }
+            }
+            break;
+            
+          case 'update':
+            // User made changes to the document
+            if (documentId && documentSessions[documentId]) {
+              // Broadcast the changes to all other users editing this document
+              broadcastToOthers(documentId, ws, {
+                type: 'document-updated',
+                content: data.content,
+                userId,
+                timestamp: new Date().toISOString(),
+                selection: data.selection
+              });
+            }
+            break;
+            
+          case 'cursor-move':
+            // User moved their cursor
+            if (documentId && documentSessions[documentId]) {
+              // Broadcast cursor position to other users
+              broadcastToOthers(documentId, ws, {
+                type: 'cursor-position',
+                position: data.position,
+                userId,
+                timestamp: new Date().toISOString()
+              });
+            }
+            break;
+        }
+      } catch (error) {
+        console.error('Error handling WebSocket message:', error);
+      }
+    });
+    
+    // Handle disconnection
+    ws.on('close', () => {
+      if (documentId && documentSessions[documentId]) {
+        documentSessions[documentId].delete(ws);
+        
+        // Clean up empty sessions
+        if (documentSessions[documentId].size === 0) {
+          delete documentSessions[documentId];
+        } else {
+          // Notify others that someone left
+          broadcastToOthers(documentId, ws, {
+            type: 'user-left',
+            userId,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+    });
+  });
+  
+  // Helper function to broadcast messages to all other clients editing the same document
+  function broadcastToOthers(documentId: string, sender: any, message: any) {
+    if (documentSessions[documentId]) {
+      documentSessions[documentId].forEach((client) => {
+        if (client !== sender && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(message));
+        }
+      });
+    }
+  }
+  
   return httpServer;
 }
