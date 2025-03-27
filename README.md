@@ -4,7 +4,7 @@ LetterDrive is a modern web application that allows users to create, edit, and s
 
 ![LetterDrive Screenshot](/images/LandingPage.png)
 ![LetterDrive Screenshot](/images/saveto.png)
-![LetterDrive Screenshot](/images/page.png)
+![LetterDrive Screenshot](/images/newPage.png)
 
 ## Features
 
