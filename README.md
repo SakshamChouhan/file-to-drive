@@ -11,7 +11,7 @@ LetterDrive is a modern web application that allows users to create, edit, and s
 - 🔐 Secure Google OAuth2.0 Authentication
 - 📝 Create and Edit Letters
 - ☁️ Direct Google Drive Integration
-- 🎨 Modern UI with Dark/Light Mode
+- 🎨 Modern UI
 - 🔄 Real-time Auto-save
 - 📱 Responsive Design
 - 🔍 Document Search and Organization
