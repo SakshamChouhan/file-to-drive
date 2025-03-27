@@ -2,10 +2,15 @@ import passport from 'passport';
 import express, { NextFunction, Request, Response } from 'express';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import session from 'express-session';
+import connectPgSimple from 'connect-pg-simple';
 import { storage } from './storage';
 
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
   throw new Error('Google OAuth credentials are not defined in environment variables');
+}
+
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is not defined in environment variables');
 }
 
 // Configure Google OAuth strategy
@@ -76,15 +81,26 @@ passport.deserializeUser(async (id: number, done) => {
 
 // Configure Express session
 export const configureAuth = (app: express.Express) => {
+  const PgSession = connectPgSimple(session);
+  
   app.use(session({
+    store: new PgSession({
+      conObject: {
+        connectionString: process.env.DATABASE_URL,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+      },
+      tableName: 'session'
+    }),
     secret: process.env.SESSION_SECRET || 'letter-drive-secret',
     resave: false,
     saveUninitialized: false,
     cookie: {
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
       secure: process.env.NODE_ENV === 'production',
-      httpOnly: true
-    }
+      httpOnly: true,
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+    },
+    proxy: process.env.NODE_ENV === 'production' // trust proxy in production
   }));
 
   app.use(passport.initialize());
