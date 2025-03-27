@@ -1,35 +1,38 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
 import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 dotenv.config();
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { Pool } = pg;
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+const createSessionTable = `
+CREATE TABLE IF NOT EXISTS "session" (
+  "sid" varchar NOT NULL COLLATE "default",
+  "sess" json NOT NULL,
+  "expire" timestamp(6) NOT NULL,
+  CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
+);
+CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+`;
 
 async function runMigration() {
-  if (!process.env.DATABASE_URL) {
-    console.error('DATABASE_URL environment variable is required');
-    process.exit(1);
-  }
-
-  const client = new pg.Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  });
-
   try {
-    await client.connect();
-    console.log('Connected to database');
-
-    const sql = fs.readFileSync(path.join(__dirname, 'migrations', '0000_create_session_table.sql'), 'utf8');
-    await client.query(sql);
+    await pool.query(createSessionTable);
     console.log('Session table created successfully');
-  } catch (err) {
-    console.error('Error running migration:', err);
-  } finally {
-    await client.end();
+    process.exit(0);
+  } catch (error) {
+    console.error('Migration failed:', error);
+    process.exit(1);
   }
 }
 
