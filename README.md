@@ -2,7 +2,7 @@
 
 LetterDrive is a modern web application that allows users to create, edit, and save letters directly to their Google Drive. Built with React, TypeScript, and Express, it provides a seamless experience for managing your documents with Google Drive integration.
 
-![LetterDrive Screenshot](screenshot.png)
+![LetterDrive Screenshot](/images/LandingPage.png)
 
 ## Features
 
