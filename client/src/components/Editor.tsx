@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Editor as DraftEditor, EditorState, RichUtils, ContentState, convertToRaw, convertFromRaw, SelectionState } from 'draft-js';
 import 'draft-js/dist/Draft.css';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Document } from '@shared/schema';
-import { formatDistanceToNow, format } from 'date-fns';
+import { format } from 'date-fns';
 import {
   Bold, Italic, Underline, AlignLeft, AlignCenter,
   AlignRight, List, ListOrdered, ChevronLeft, ChevronRight,
-  CloudUpload, MoreHorizontal, Users
+  CloudUpload
 } from 'lucide-react';
 import { CollaborationInfo } from './CollaborationInfo';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -35,21 +35,11 @@ const Editor: React.FC<EditorProps> = ({
   isSaved,
   lastSavedTime
 }) => {
-  const [editorState, setEditorState] = useState(() => {
-    if (document?.content) {
-      try {
-        const contentState = convertFromRaw(JSON.parse(document.content));
-        return EditorState.createWithContent(contentState);
-      } catch (e) {
-        return EditorState.createWithContent(ContentState.createFromText(document.content || ''));
-      }
-    }
-    return EditorState.createEmpty();
-  });
+  const [editorState, setEditorState] = useState(() => EditorState.createEmpty());
   
   const [collaborators, setCollaborators] = useState<any[]>([]);
   const skipNextUpdate = useRef(false);
-  const editorRef = useRef<DraftEditor>(null);
+  const editorRef = useRef<any>(null);
   const { user } = useAuth();
   
   // Connect to WebSocket for real-time collaboration if document exists
@@ -131,20 +121,54 @@ const Editor: React.FC<EditorProps> = ({
     }
   });
   
+  // Reset editor when document changes or when creating new document
   useEffect(() => {
-    if (!document?.content) return;
+    if (!document) {
+      // Clear editor state for new document
+      setEditorState(EditorState.createEmpty());
+      return;
+    }
     
     try {
-      // Parse content from document
-      const contentState = convertFromRaw(JSON.parse(document.content));
-      const newEditorState = EditorState.createWithContent(contentState);
-      setEditorState(newEditorState);
+      if (document.content) {
+        // Parse content from document
+        const contentState = convertFromRaw(JSON.parse(document.content));
+        const newEditorState = EditorState.createWithContent(contentState);
+        setEditorState(newEditorState);
+      } else {
+        // Clear editor state if no content
+        setEditorState(EditorState.createEmpty());
+      }
     } catch (e) {
       // If parsing fails, create from plain text
       const contentState = ContentState.createFromText(document.content || '');
       setEditorState(EditorState.createWithContent(contentState));
     }
-  }, [document?.id, document?.content]);
+  }, [document]);
+
+  // Handle editor changes
+  const handleEditorChange = useCallback((newState: typeof EditorState) => {
+    if (skipNextUpdate.current) {
+      skipNextUpdate.current = false;
+      return;
+    }
+
+    setEditorState(newState);
+    
+    // Get current content and notify parent
+    const contentState = newState.getCurrentContent();
+    const rawContent = convertToRaw(contentState);
+    onUpdateContent(JSON.stringify(rawContent));
+    
+    // Send update through WebSocket if connected
+    if (isConnected && document?.id) {
+      const selection = newState.getSelection();
+      sendDocumentUpdate(JSON.stringify({
+        content: rawContent,
+        selection: selection.toJS()
+      }));
+    }
+  }, [isConnected, document?.id, onUpdateContent, sendDocumentUpdate]);
   
   // Send cursor position updates on selection change
   useEffect(() => {
@@ -166,54 +190,30 @@ const Editor: React.FC<EditorProps> = ({
     }
   }, [editorState.getSelection(), isConnected, document, sendCursorPosition]);
   
-  const handleChange = (state: EditorState) => {
-    setEditorState(state);
-    
-    // Skip sending updates if this was triggered by a received update
-    if (skipNextUpdate.current) {
-      skipNextUpdate.current = false;
-      return;
-    }
-    
-    // Convert content to JSON string
-    const contentState = state.getCurrentContent();
-    const rawContent = convertToRaw(contentState);
-    const jsonContent = JSON.stringify(rawContent);
-    
-    // Send to parent component
-    onUpdateContent(jsonContent);
-    
-    // Send update to collaborators
-    if (isConnected && document) {
-      const selection = state.getSelection();
-      sendDocumentUpdate(jsonContent, {
-        anchorKey: selection.getAnchorKey(),
-        anchorOffset: selection.getAnchorOffset(),
-        focusKey: selection.getFocusKey(),
-        focusOffset: selection.getFocusOffset(),
-        isBackward: selection.getIsBackward(),
-        hasFocus: selection.getHasFocus()
-      });
-    }
-  };
-  
-  const handleKeyCommand = (command: string, editorState: EditorState) => {
+  const handleKeyCommand = (command: string) => {
     const newState = RichUtils.handleKeyCommand(editorState, command);
     if (newState) {
-      handleChange(newState);
+      handleEditorChange(newState);
       return 'handled';
     }
     return 'not-handled';
   };
   
   const toggleInlineStyle = (style: string) => {
-    handleChange(RichUtils.toggleInlineStyle(editorState, style));
+    handleEditorChange(RichUtils.toggleInlineStyle(editorState, style));
   };
   
   const toggleBlockType = (blockType: string) => {
-    handleChange(RichUtils.toggleBlockType(editorState, blockType));
+    handleEditorChange(RichUtils.toggleBlockType(editorState, blockType));
   };
   
+  const focusEditor = useCallback(() => {
+    const editor = editorRef.current;
+    if (editor) {
+      editor.focus();
+    }
+  }, []);
+
   if (!document) {
     return (
       <div className="flex-grow overflow-hidden flex flex-col items-center justify-center bg-gray-50">
@@ -377,12 +377,12 @@ const Editor: React.FC<EditorProps> = ({
       </div>
       
       {/* Editor Area */}
-      <div className="flex-grow overflow-y-auto p-4 sm:p-6 bg-white" onClick={() => editorRef.current?.focus()}>
+      <div className="flex-grow overflow-y-auto p-4 sm:p-6 bg-white" onClick={focusEditor}>
         <div className="editor-content max-w-3xl mx-auto">
           <DraftEditor
             ref={editorRef}
             editorState={editorState}
-            onChange={handleChange}
+            onChange={handleEditorChange}
             handleKeyCommand={handleKeyCommand}
             placeholder="Start writing your letter..."
           />
@@ -390,19 +390,7 @@ const Editor: React.FC<EditorProps> = ({
       </div>
       
       {/* Bottom Action Bar */}
-      <div className="px-4 py-3 border-t border-neutral-200 bg-white flex items-center justify-between">
-        <div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-gray-600 hover:text-gray-900 flex items-center"
-            aria-label="More formatting options"
-          >
-            <MoreHorizontal className="h-4 w-4 mr-1" />
-            <span className="text-sm hidden sm:inline">More</span>
-          </Button>
-        </div>
-        
+      <div className="px-4 py-3 border-t border-neutral-200 bg-white flex items-center justify-end">
         <div className="flex space-x-3">
           <Button
             variant="outline"

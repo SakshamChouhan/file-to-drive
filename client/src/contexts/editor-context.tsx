@@ -1,99 +1,41 @@
-import { createContext, useState, ReactNode, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback } from 'react';
 import { Letter } from '@/types';
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from '@/lib/queryClient';
+import { useToast } from '@/components/toast/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
 
 interface EditorContextType {
-  content: string;
   currentLetter: Letter | null;
-  saveStatus: string;
-  isEditorReady: boolean;
   setCurrentLetter: (letter: Letter | null) => void;
-  onContentChange: (content: string) => void;
-  setTitle: (title: string) => void;
-  executeCommand: (command: string, value?: string) => void;
   saveDraft: () => Promise<Letter | null>;
   saveToGoogleDrive: (title: string, folderId: string) => Promise<boolean>;
+  isModified: boolean;
+  setIsModified: (modified: boolean) => void;
 }
 
-export const EditorContext = createContext<EditorContextType>({
-  content: '',
-  currentLetter: null,
-  saveStatus: 'All changes saved',
-  isEditorReady: false,
-  setCurrentLetter: () => {},
-  onContentChange: () => {},
-  setTitle: () => {},
-  executeCommand: () => {},
-  saveDraft: async () => null,
-  saveToGoogleDrive: async () => false,
-});
+const EditorContext = createContext<EditorContextType | null>(null);
+
+export const useEditor = () => {
+  const context = useContext(EditorContext);
+  if (!context) {
+    throw new Error('useEditor must be used within an EditorProvider');
+  }
+  return context;
+};
 
 interface EditorProviderProps {
-  children: ReactNode;
+  children: React.ReactNode;
 }
 
-export function EditorProvider({ children }: EditorProviderProps) {
-  const [content, setContent] = useState('');
+export const EditorProvider: React.FC<EditorProviderProps> = ({ children }) => {
   const [currentLetter, setCurrentLetter] = useState<Letter | null>(null);
-  const [saveStatus, setSaveStatus] = useState('All changes saved');
-  const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
-  const [isEditorReady, setIsEditorReady] = useState(false);
+  const [isModified, setIsModified] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Auto-save draft when content changes
-  useEffect(() => {
-    if (currentLetter && content) {
-      setSaveStatus('Saving...');
-      
-      if (saveTimeout) {
-        clearTimeout(saveTimeout);
-      }
-      
-      const timeout = setTimeout(() => {
-        saveDraft()
-          .then(() => {
-            setSaveStatus('All changes saved');
-          })
-          .catch(() => {
-            setSaveStatus('Failed to save');
-          });
-      }, 1500);
-      
-      setSaveTimeout(timeout);
-    }
-    
-    return () => {
-      if (saveTimeout) {
-        clearTimeout(saveTimeout);
-      }
-    };
-  }, [content]);
-
-  const onContentChange = useCallback((newContent: string) => {
-    setContent(newContent);
-    
-    if (currentLetter) {
-      setCurrentLetter({
-        ...currentLetter,
-        content: newContent,
-      });
-    }
-  }, [currentLetter]);
-
-  const setTitle = useCallback((title: string) => {
-    if (currentLetter) {
-      setCurrentLetter({
-        ...currentLetter,
-        title,
-      });
-    }
-  }, [currentLetter]);
-
-  const executeCommand = useCallback((command: string, value?: string) => {
-    document.execCommand(command, false, value);
+  const validateTitle = useCallback((title: string): string => {
+    const trimmedTitle = title.trim();
+    return trimmedTitle || 'Untitled Letter';
   }, []);
 
   const saveDraft = useCallback(async (): Promise<Letter | null> => {
@@ -105,10 +47,17 @@ export function EditorProvider({ children }: EditorProviderProps) {
         ? `/api/letters/${currentLetter.id}` 
         : '/api/letters';
       
-      const response = await apiRequest(method, endpoint, currentLetter);
+      // Ensure title is validated before saving
+      const letterToSave = {
+        ...currentLetter,
+        title: validateTitle(currentLetter.title)
+      };
+      
+      const response = await apiRequest(method, endpoint, letterToSave);
       const savedLetter = await response.json();
       
       setCurrentLetter(savedLetter);
+      setIsModified(false);
       queryClient.invalidateQueries({ queryKey: ['/api/letters'] });
       
       return savedLetter;
@@ -121,21 +70,34 @@ export function EditorProvider({ children }: EditorProviderProps) {
       });
       return null;
     }
-  }, [currentLetter, queryClient, toast]);
+  }, [currentLetter, queryClient, toast, validateTitle]);
 
   const saveToGoogleDrive = useCallback(async (title: string, folderId: string): Promise<boolean> => {
     if (!currentLetter) return false;
     
     try {
       // First ensure we have the latest version saved locally
-      await saveDraft();
+      const savedLetter = await saveDraft();
+      if (!savedLetter) throw new Error('Failed to save draft');
       
-      const response = await apiRequest('POST', `/api/letters/${currentLetter.id}/gdrive`, {
-        title,
-        folderId,
-      });
+      const finalTitle = validateTitle(title);
+      
+      const response = await apiRequest(
+        'POST',
+        `/api/letters/${savedLetter.id}/gdrive`,
+        {
+          title: finalTitle,
+          folderId,
+        }
+      );
       
       if (response.ok) {
+        // Update local letter title if it was saved successfully
+        setCurrentLetter(prev => prev ? {
+          ...prev,
+          title: finalTitle
+        } : null);
+        
         toast({
           title: "Success",
           description: "Letter successfully saved to Google Drive.",
@@ -153,26 +115,20 @@ export function EditorProvider({ children }: EditorProviderProps) {
       });
       return false;
     }
-  }, [currentLetter, saveDraft, toast]);
-
-  useEffect(() => {
-    setIsEditorReady(true);
-  }, []);
+  }, [currentLetter, saveDraft, toast, validateTitle]);
 
   return (
-    <EditorContext.Provider value={{
-      content,
-      currentLetter,
-      saveStatus,
-      isEditorReady,
-      setCurrentLetter,
-      onContentChange,
-      setTitle,
-      executeCommand,
-      saveDraft,
-      saveToGoogleDrive,
-    }}>
+    <EditorContext.Provider
+      value={{
+        currentLetter,
+        setCurrentLetter,
+        saveDraft,
+        saveToGoogleDrive,
+        isModified,
+        setIsModified,
+      }}
+    >
       {children}
     </EditorContext.Provider>
   );
-}
+};

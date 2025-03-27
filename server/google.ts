@@ -128,6 +128,13 @@ export async function saveDocumentToDrive(
   } else {
     folderId = await getOrCreateLetterDriveFolder(userId);
   }
+
+  // Ensure title is not empty
+  if (!title || !title.trim()) {
+    throw new Error('Document title is required');
+  }
+
+  const finalTitle = title.trim();
   
   // Parse content if it seems to be JSON and extract text
   let textContent = content;
@@ -152,7 +159,7 @@ export async function saveDocumentToDrive(
     <html>
     <head>
       <meta charset="UTF-8">
-      <title>${title}</title>
+      <title>${finalTitle}</title>
     </head>
     <body>
       <div style="font-family: Arial, sans-serif; line-height: 1.6;">
@@ -167,7 +174,7 @@ export async function saveDocumentToDrive(
     await drive.files.update({
       fileId: driveId,
       requestBody: {
-        name: title
+        name: finalTitle
       },
       media: {
         mimeType: 'text/html',
@@ -214,7 +221,7 @@ export async function saveDocumentToDrive(
   } else {
     // Create new file
     const fileMetadata = {
-      name: title,
+      name: finalTitle,
       parents: [folderId],
       mimeType: 'application/vnd.google-apps.document'
     };
@@ -229,7 +236,7 @@ export async function saveDocumentToDrive(
     });
     
     if (!file.data.id) {
-      throw new Error(`Failed to create document in Google Drive: ${title}`);
+      throw new Error(`Failed to create document in Google Drive: ${finalTitle}`);
     }
     
     // Set permissions if specified

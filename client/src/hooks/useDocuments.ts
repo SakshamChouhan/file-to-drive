@@ -2,13 +2,14 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import { queryClient } from '@/lib/queryClient';
 import { Document, UpdateDocument } from '@shared/schema';
+import { DriveDocument } from '@/lib/api';
 
 export function useDocuments() {
   const documentsQuery = useQuery<Document[]>({
     queryKey: ['/api/documents'],
   });
   
-  const driveDocumentsQuery = useQuery<any[]>({
+  const driveDocumentsQuery = useQuery<DriveDocument[]>({
     queryKey: ['/api/documents/drive/list'],
     queryFn: async () => {
       try {
@@ -29,7 +30,12 @@ export function useDocuments() {
           throw new Error(errorData.message || 'Failed to fetch documents from Google Drive');
         }
         
-        return response.json();
+        const docs = await response.json();
+        return docs.map((doc: any) => ({
+          ...doc,
+          name: doc.name || 'Untitled Letter', // Ensure name is never undefined
+          modifiedTime: doc.modifiedTime || new Date().toISOString(),
+        }));
       } catch (error) {
         console.error('Error fetching Drive documents:', error);
         throw error;
@@ -71,13 +77,18 @@ export function useDocuments() {
   const saveToDrive = useMutation({
     mutationFn: async ({ id, title, category, content, permission }: { 
       id: number, 
-      title?: string, 
+      title: string, 
       category?: string, 
       content?: string,
       permission?: string 
     }) => {
       try {
-        // Get the document content if not provided
+        // Ensure we have a valid title
+        const finalTitle = title?.trim();
+        if (!finalTitle) {
+          throw new Error('Title is required');
+        }
+
         let plainTextContent = content;
         
         if (!plainTextContent) {
@@ -93,7 +104,7 @@ export function useDocuments() {
         }
         
         const response = await apiRequest('POST', `/api/documents/${id}/save-to-drive`, { 
-          title, 
+          title: finalTitle,
           category,
           plainTextContent,
           permission
@@ -114,17 +125,19 @@ export function useDocuments() {
           throw new Error(errorData.message || 'Failed to save to Google Drive');
         }
         
-        return response.json();
+        const result = await response.json();
+        
+        // Invalidate queries to refresh the documents list
+        await queryClient.invalidateQueries({ queryKey: ['documents'] });
+        await queryClient.invalidateQueries({ queryKey: ['driveDocuments'] });
+        await queryClient.invalidateQueries({ queryKey: ['document', id] });
+        
+        return result;
       } catch (error) {
         console.error('Error saving to Drive:', error);
         throw error;
       }
-    },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/documents'] });
-      queryClient.invalidateQueries({ queryKey: [`/api/documents/${variables.id}`] });
-      queryClient.invalidateQueries({ queryKey: ['/api/documents/drive/list'] });
-    },
+    }
   });
   
   const getDocument = (id: number) => {

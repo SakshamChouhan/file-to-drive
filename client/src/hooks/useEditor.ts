@@ -19,11 +19,14 @@ export function useEditor(initialDocument?: Document) {
     if (initialDocument) {
       setDocument(initialDocument);
       setContent(initialDocument.content || '');
-      setTitle(initialDocument.title || 'Untitled Letter');
+      // Only update title if it's empty or if it's the default and document has a different title
+      if (!title || (title === 'Untitled Letter' && initialDocument.title)) {
+        setTitle(initialDocument.title || 'Untitled Letter');
+      }
       setLastSavedTime(initialDocument.lastSaved ? new Date(initialDocument.lastSaved) : null);
       setIsSaved(true);
     }
-  }, [initialDocument]);
+  }, [initialDocument, title]);
   
   // Mark as unsaved when content or title changes
   useEffect(() => {
@@ -34,7 +37,12 @@ export function useEditor(initialDocument?: Document) {
   
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
-    setTitle(newTitle);
+    // Don't allow empty titles
+    if (!newTitle.trim()) {
+      setTitle('Untitled Letter');
+    } else {
+      setTitle(newTitle.trim());
+    }
     setIsSaved(false);
   }, []);
   
@@ -49,24 +57,24 @@ export function useEditor(initialDocument?: Document) {
     if (!document || isSaving || (isSaved && content === document.content && title === document.title)) {
       return false;
     }
-    
+
     setIsSaving(true);
-    
     try {
       const updatedDoc = await updateDocument.mutateAsync({
         id: document.id,
         data: {
-          title,
-          content
+          content,
+          title
         }
       });
-      
+
       if (updatedDoc) {
         setDocument(updatedDoc);
-        setLastSavedTime(updatedDoc.lastSaved ? new Date(updatedDoc.lastSaved) : new Date());
         setIsSaved(true);
+        setLastSavedTime(updatedDoc.lastSaved ? new Date(updatedDoc.lastSaved) : new Date());
         return true;
       }
+
       return false;
     } catch (error) {
       console.error('Failed to save draft:', error);
@@ -74,44 +82,50 @@ export function useEditor(initialDocument?: Document) {
     } finally {
       setIsSaving(false);
     }
-  }, [document, content, title, isSaving, isSaved, updateDocument]);
-  
+  }, [document, isSaving, isSaved, content, title, updateDocument]);
+
   // Save to Google Drive
-  const saveToGoogleDrive = useCallback(async (category?: string, permission?: string) => {
+  const saveToGoogleDrive = useCallback(async (category: string, permission: string, customTitle?: string): Promise<boolean> => {
     if (!document || isSaving) {
-      return;
+      return false;
     }
-    
-    // First save locally if there are unsaved changes
-    if (!isSaved) {
-      await saveDraft();
-    }
-    
+
     setIsSaving(true);
-    
     try {
-      const updatedDoc = await saveToDrive.mutateAsync({ 
+      // Use customTitle if provided, otherwise use current title
+      const titleToSave = (customTitle || title).trim();
+
+      // Make sure we have a valid title
+      if (!titleToSave) {
+        throw new Error('Title is required');
+      }
+
+      // Make sure we have the latest content and title saved first
+      await saveDraft();
+
+      const updatedDoc = await saveToDrive.mutateAsync({
         id: document.id,
-        title: title, // Pass the current title
+        title: titleToSave,
         category,
-        content: content, // Pass the current content
-        permission // Pass the permission parameter for sharing settings
-      } as any);
-      
+        content,
+        permission
+      });
+
       if (updatedDoc) {
         setDocument(updatedDoc);
+        setTitle(titleToSave); // Update local title state
         setLastSavedTime(updatedDoc.lastSaved ? new Date(updatedDoc.lastSaved) : new Date());
         return true;
       }
-      
+
       return false;
     } catch (error) {
       console.error('Failed to save to Google Drive:', error);
-      return false;
+      throw error; // Re-throw to handle in the UI
     } finally {
       setIsSaving(false);
     }
-  }, [document, isSaving, isSaved, saveDraft, saveToDrive, title]);
+  }, [document, isSaving, saveDraft, saveToDrive, title, content]);
   
   // Auto-save draft
   useEffect(() => {

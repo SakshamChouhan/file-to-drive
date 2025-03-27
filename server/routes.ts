@@ -104,6 +104,10 @@ documentsRouter.post('/:id/save-to-drive', isAuthenticated, async (req, res) => 
     
     const { category, plainTextContent, title, permission } = req.body;
     
+    if (!title || !title.trim()) {
+      return res.status(400).json({ message: 'Document title is required' });
+    }
+
     // Use plainTextContent if available, otherwise use document.content
     const contentToSave = plainTextContent || document.content || '';
     
@@ -111,18 +115,18 @@ documentsRouter.post('/:id/save-to-drive', isAuthenticated, async (req, res) => 
       const driveId = await saveDocumentToDrive(
         user.id,
         id,
-        title || document.title, // Use title from request if available
+        title.trim(), // Always use provided title, trimmed
         contentToSave,
         category,
         document.driveId || undefined,
-        permission // Pass permission parameter to Google Drive API
+        permission
       );
       
-      // Update document with Drive ID and possibly new title
+      // Update document with Drive ID and new title
       const updatedDocument = await storage.updateDocument(id, {
         driveId: driveId || undefined,
         isInDrive: true,
-        title: title || document.title // Update title if provided
+        title: title.trim() // Always use provided title, trimmed
       });
       
       res.json(updatedDocument);

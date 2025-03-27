@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useDocuments } from '@/hooks/useDocuments';
 import { useEditor } from '@/hooks/useEditor';
 import { Document } from '@shared/schema';
+import { DriveDocument } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import Editor from '@/components/Editor';
 import UserProfile from '@/components/UserProfile';
@@ -23,13 +24,11 @@ const Home: React.FC = () => {
   const [isSidebarVisible, setIsSidebarVisible] = useState(window.innerWidth >= 768);
   
   // Get the active document
-  const { data: activeDocument, isLoading: documentLoading } = getDocument(activeDocId || 0);
+  const { data: activeDocument } = getDocument(activeDocId || 0);
   
   // Use editor hook to handle document editing
   const {
     document: editingDocument,
-    content,
-    title,
     isSaving,
     isSaved,
     lastSavedTime,
@@ -82,7 +81,14 @@ const Home: React.FC = () => {
     }
   };
   
-  const handleSelectDocument = (document: Document) => {
+  const handleSelectDocument = (document: Document | DriveDocument) => {
+    // If it's a Drive document, open it in a new tab
+    if ('webViewLink' in document) {
+      window.open(document.webViewLink, '_blank');
+      return;
+    }
+    
+    // Otherwise, set it as the active document
     setActiveDocId(document.id);
   };
   
@@ -92,14 +98,12 @@ const Home: React.FC = () => {
   };
   
   const handleConfirmSaveToDrive = async (documentTitle: string, category: string, permission: string): Promise<void> => {
-    // Always update the title with the value from the modal
-    handleTitleChange(documentTitle);
-    // Always save the draft with the updated title before saving to Drive
-    await saveDraft();
-    
     try {
+      // Update the title first
+      handleTitleChange(documentTitle);
+      
       // Save to drive with the selected category, title, and permission
-      const success = await saveToGoogleDrive(category, permission);
+      const success = await saveToGoogleDrive(category, permission, documentTitle);
       
       if (success) {
         setToast({
@@ -108,10 +112,7 @@ const Home: React.FC = () => {
           type: 'success'
         });
       } else {
-        setToast({
-          message: 'Failed to save document to Google Drive',
-          type: 'error'
-        });
+        throw new Error('Failed to save document to Google Drive');
       }
     } catch (error: any) {
       console.error('Error in handleConfirmSaveToDrive:', error);
@@ -136,6 +137,8 @@ const Home: React.FC = () => {
           type: 'error'
         });
       }
+    } finally {
+      setIsSaveToDriveModalOpen(false);
     }
   };
   

@@ -1,5 +1,6 @@
 import { users, documents, type User, type InsertUser, type Document, type InsertDocument, type UpdateDocument } from "@shared/schema";
-import { db } from "./db";
+import { db } from "./db.ts";
+
 import { eq, and } from "drizzle-orm";
 
 export interface IStorage {
